@@ -8,7 +8,7 @@ import pymysql
 import pandas as pd
 
 models_path = "model/"
-model_file = 'bst_mi.model'
+# model_file = 'bst_mi.model'
 def loadXyFromDB(sql):
     db_connection_str = 'mysql+pymysql://root:12345678@localhost/miphone'
     db_connection = create_engine(db_connection_str)
@@ -26,8 +26,8 @@ def loadDfFromDB(sql):
 
 
 
-def gen_model(sql):
-    global bst, models_path, model_file
+def gen_model(sql,model_file):
+    # global bst, models_path, model_file
     X, y = loadXyFromDB(sql)
     print("loaded data")
     from sklearn.model_selection import train_test_split
@@ -60,16 +60,20 @@ def gen_model(sql):
     '''
     from sklearn.metrics import precision_score
     print("准确率")
-    print(precision_score(y_test, best_preds, average='macro'))
+    score = precision_score(y_test, best_preds, average='macro')
+    print(score)
     print("f1值")
-    print(f1_score(y_test, best_preds, average='macro'))
+    f_score = f1_score(y_test, best_preds, average='macro')
+    print(f_score)
+    append_file("model_matrix.txt","model: %s 准确度:%s f1:%s"
+                %(model_file,score,f_score))
     '''
     模型存储与加载
     '''
     bst.save_model(models_path + model_file)
 
 
-def gen_result(sql_tdata,res_file):
+def gen_result(sql_tdata,model_file,res_file):
     global bst
     bst = xgb.Booster({'nthread': 4})  # init model
     bst.load_model(models_path + model_file)
@@ -89,22 +93,120 @@ def gen_result(sql_tdata,res_file):
     print(pdata[pdata.label.eq(1)])
 
 
+def append_file(filename,str):
+    # 打开文件
+    fo = open(filename, "w")
+    fo.write( str )
+    # 关闭文件
+    fo.close()
+
+def test_a_model(sql_data,ndata_sql,mfile,res_file):
+    gen_model(sql_data, model_file=mfile)
+    gen_result(ndata_sql, model_file=mfile, res_file=res_file)
+
+
+
 if __name__ == '__main__':
-    sql_data='''
-    select  CAST(total_use_days AS DECIMAL(4)) tdays,
+    test_a_model('''
+    select CAST(total_use_days AS DECIMAL(4)) tdays,
      CAST(user_age AS DECIMAL(4)) uage,
           CAST(user_sex AS DECIMAL(4)) usex,
            CAST(age AS DECIMAL(4))realage,
+            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
+             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
+              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
+               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
+                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
+                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
+                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
+                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
+                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
+                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
+                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
+                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
+                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
+                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
+                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
+                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
+                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
+                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
+                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
+                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
+                                CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
+                                 CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
+                                  CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
+                                   CASE WHEN a.24 = 'True' THEN 1 ELSE 0 END ,
+                                    CASE WHEN a.25 = 'True' THEN 1 ELSE 0 END ,
+                                     CASE WHEN a.26 = 'True' THEN 1 ELSE 0 END ,
+                                      CASE WHEN a.27 = 'True' THEN 1 ELSE 0 END ,
+                                       CASE WHEN a.28 = 'True' THEN 1 ELSE 0 END ,
+                                        CASE WHEN a.29 = 'True' THEN 1 ELSE 0 END ,
+                                         CASE WHEN a.30 = 'True' THEN 1 ELSE 0 END ,
     case when concat('',tag * 1) = tag then 1
     else 0
     end tag
-    from user;'''
-    gen_model(sql_data)
-    ndata_sql = '''select  CAST(total_use_days AS DECIMAL(4)) tdays,
+from user u
+join user_active_history30 a on u.uid=a.uid''',
+                 '''select CAST(total_use_days AS DECIMAL(4)) tdays,
      CAST(user_age AS DECIMAL(4)) uage,
-      CAST(user_sex AS DECIMAL(4)) usex,
-       CAST(age AS DECIMAL(4)) realage,uid
-    from user_test ;'''
-    gen_result(ndata_sql,"xgb_tdays_age_sex_rage.csv")
+          CAST(user_sex AS DECIMAL(4)) usex,
+           CAST(age AS DECIMAL(4))realage,
+                      CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
+             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
+              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
+               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
+                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
+                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
+                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
+                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
+                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
+                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
+                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
+                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
+                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
+                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
+                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
+                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
+                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
+                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
+                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
+                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
+                                CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
+                                 CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
+                                  CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
+                                   CASE WHEN a.24 = 'True' THEN 1 ELSE 0 END ,
+                                    CASE WHEN a.25 = 'True' THEN 1 ELSE 0 END ,
+                                     CASE WHEN a.26 = 'True' THEN 1 ELSE 0 END ,
+                                      CASE WHEN a.27 = 'True' THEN 1 ELSE 0 END ,
+                                       CASE WHEN a.28 = 'True' THEN 1 ELSE 0 END ,
+                                        CASE WHEN a.29 = 'True' THEN 1 ELSE 0 END ,
+                                         CASE WHEN a.30 = 'True' THEN 1 ELSE 0 END ,
+
+    u.uid
+from user_test u
+join user_active_history30_test a on u.uid=a.uid''',
+                 mfile= 'model_u_30a',
+                 res_file= "xgb_model_u_30a.csv"
+                 )
+
+
+'''只使用user的几个属性'''
+    # test_a_model('''
+    # select  CAST(total_use_days AS DECIMAL(4)) tdays,
+    #  CAST(user_age AS DECIMAL(4)) uage,
+    #       CAST(user_sex AS DECIMAL(4)) usex,
+    #        CAST(age AS DECIMAL(4))realage,
+    # case when concat('',tag * 1) = tag then 1
+    # else 0
+    # end tag
+    # from user;''',
+    #              '''select  CAST(total_use_days AS DECIMAL(4)) tdays,
+    #              CAST(user_age AS DECIMAL(4)) uage,
+    #               CAST(user_sex AS DECIMAL(4)) usex,
+    #                CAST(age AS DECIMAL(4)) realage,uid
+    #             from user_test ;''',
+    #             mfile= 'model_u_30a',
+    #             res_file= "xgb_model_u_30a.csv"
+    #              )
 
 
