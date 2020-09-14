@@ -41,11 +41,11 @@ def gen_model(sql,model_file):
  Generally try with eta 0.1, 0.2, 0.3, max_depth in range of 2 to 10 and num_round around few hundred.
 '''
     param = {
-        'max_depth': 3,  # the maximum depth of each tree
-        'eta': 0.3,  # the training step for each iteration
+        'max_depth': 8,  # the maximum depth of each tree
+        'eta': 0.1,  # the training step for each iteration
         'objective': 'multi:softprob',  # error evaluation for multiclass training
         'num_class': 2}  # the number of classes that exist in this datset
-    num_round = 20  # the number of training iterations
+    num_round = 40  # the number of training iterations
     print("开始训练")
     bst = xgb.train(param, dtrain, num_round)
     print("训练完成")
@@ -95,8 +95,8 @@ def gen_result(sql_tdata,model_file,res_file):
 
 def append_file(filename,str):
     # 打开文件
-    fo = open(filename, "w")
-    fo.write( str )
+    fo = open(filename, "a")
+    fo.write( str+"\n" )
     # 关闭文件
     fo.close()
 
@@ -108,10 +108,12 @@ def test_a_model(sql_data,ndata_sql,mfile,res_file):
 
 if __name__ == '__main__':
     test_a_model('''
-    select CAST(total_use_days AS DECIMAL(4)) tdays,
-     CAST(user_age AS DECIMAL(4)) uage,
-          CAST(user_sex AS DECIMAL(4)) usex,
-           CAST(age AS DECIMAL(4))realage,
+   select 
+CAST(total_use_days AS DECIMAL(4)) tdays,
+ CAST(user_age AS DECIMAL(4)) uage,
+  CAST(user_sex AS DECIMAL(4)) usex,
+  CAST(age AS DECIMAL(4))realage,
+ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
             CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
              CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
               CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
@@ -146,12 +148,18 @@ if __name__ == '__main__':
     else 0
     end tag
 from user u
-join user_active_history30 a on u.uid=a.uid''',
-                 '''select CAST(total_use_days AS DECIMAL(4)) tdays,
-     CAST(user_age AS DECIMAL(4)) uage,
-          CAST(user_sex AS DECIMAL(4)) usex,
-           CAST(age AS DECIMAL(4))realage,
-                      CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
+join user_active_history30 a on u.uid=a.uid
+join brand_price b on u.brand=b.brand
+join user_act_h30 ua on u.uid=ua.uid
+
+''',
+                 '''select 
+CAST(total_use_days AS DECIMAL(4)) tdays,
+ CAST(user_age AS DECIMAL(4)) uage,
+  CAST(user_sex AS DECIMAL(4)) usex,
+  CAST(age AS DECIMAL(4))realage,
+ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
              CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
               CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
                CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
@@ -181,12 +189,13 @@ join user_active_history30 a on u.uid=a.uid''',
                                        CASE WHEN a.28 = 'True' THEN 1 ELSE 0 END ,
                                         CASE WHEN a.29 = 'True' THEN 1 ELSE 0 END ,
                                          CASE WHEN a.30 = 'True' THEN 1 ELSE 0 END ,
-
-    u.uid
+u.uid
 from user_test u
-join user_active_history30_test a on u.uid=a.uid''',
-                 mfile= 'model_u_30a',
-                 res_file= "xgb_model_u_30a.csv"
+join user_active_history30_test a on u.uid=a.uid
+join brand_price b on u.brand=b.brand
+join user_act_h30_test ua on u.uid=ua.uid''',
+                 mfile= 'model_u_30act_h30_without_price',
+                 res_file= "xgb_model_u_30act_h30_without_price.csv"
                  )
 
 
