@@ -32,7 +32,9 @@ def gen_model(sql,model_file):
     print("loaded data")
     from sklearn.model_selection import train_test_split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=100)
+    print(y_train)
     dtrain = xgb.DMatrix(X_train, label=y_train)
+    print(X_train)
     dtest = xgb.DMatrix(X_test, label=y_test)
     '''
 设置参数
@@ -43,8 +45,10 @@ def gen_model(sql,model_file):
     param = {
         'max_depth': 8,  # the maximum depth of each tree
         'eta': 0.1,  # the training step for each iteration
-        'objective': 'multi:softprob',  # error evaluation for multiclass training
-        'num_class': 2}  # the number of classes that exist in this datset
+        'objective': 'binary:logistic'
+        # ,  # error evaluation for multiclass training
+        # 'num_class': 2
+    }  # the number of classes that exist in this datset
     num_round = 40  # the number of training iterations
     print("开始训练")
     bst = xgb.train(param, dtrain, num_round)
