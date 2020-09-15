@@ -6,7 +6,8 @@ from sklearn.metrics import f1_score
 from sqlalchemy import create_engine
 import pymysql
 import pandas as pd
-
+import random
+from sklearn import  metrics
 models_path = "model/"
 # model_file = 'bst_mi.model'
 def loadXyFromDB(sql):
@@ -23,15 +24,48 @@ def loadDfFromDB(sql):
     return df
 
 
+'''证样本占比'''
+def undersampling(train, desired_apriori):
 
+    # Get the indices per target value
+    idx_0 = train[train['tag'] == 0].index
+    idx_1 = train[train['tag'] == 1].index
+    # Get original number of records per target value
+    nb_0 = len(train.loc[idx_0])
+    nb_1 = len(train.loc[idx_1])
+    # Calculate the undersampling rate and resulting number of records with target=0
+    undersampling_rate = ((1-desired_apriori)*nb_1)/(nb_0*desired_apriori)
+    undersampled_nb_0 = int(undersampling_rate*nb_0)
+    print('Rate to undersample records with target=0: {}'.format(undersampling_rate))
+    print('Number of records with target=0 after undersampling: {}'.format(undersampled_nb_0))
+    # Randomly select records with target=0 to get at the desired a priori
+    undersampled_idx = random.sample(list(idx_0), undersampled_nb_0)
+    # Construct list with remaining indices
+    idx_list = list(undersampled_idx) + list(idx_1)
+    # Return undersample data frame
+    train = train.loc[idx_list].reset_index(drop=True)
 
+    return train
 
 def gen_model(sql,model_file):
     # global bst, models_path, model_file
     X, y = loadXyFromDB(sql)
+    y.columns=['tag']
+    X_src,y_src=X,y
+
+    X['tag']=y
+    X_y_sample=undersampling(X, 0.2)
+    print('调整后的正负样本数')
+    print(X_y_sample.groupby('tag').size())
+    X,y=(X_y_sample.iloc[:,:-1],X_y_sample.iloc[:,-1])
+
     print("loaded data")
     from sklearn.model_selection import train_test_split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=100)
+
+    print("---")
+    print(X_train)
+    print('--y_train')
     print(y_train)
     dtrain = xgb.DMatrix(X_train, label=y_train)
     print(X_train)
@@ -45,11 +79,16 @@ def gen_model(sql,model_file):
     param = {
         'max_depth': 8,  # the maximum depth of each tree
         'eta': 0.1,  # the training step for each iteration
-        'objective': 'binary:logistic'
+        'objective': 'binary:logistic',
+        'subsample':0.6,
+        'colsample_bytree':0.8
         # ,  # error evaluation for multiclass training
         # 'num_class': 2
     }  # the number of classes that exist in this datset
-    num_round = 40  # the number of training iterations
+    # num_round = 400  # the number of training iterations
+    # for num_round in range(50,300,10):
+    num_round=170
+    print("迭代次数%s"%num_round)
     print("开始训练")
     bst = xgb.train(param, dtrain, num_round)
     print("训练完成")
@@ -58,23 +97,53 @@ def gen_model(sql,model_file):
     输出每个类别的概率
     '''
     preds = bst.predict(dtest)
-    best_preds = np.asarray([np.argmax(line) for line in preds])
+    # print('preds')
+    # print(preds)
+    # best_preds = np.asarray([np.argmax(line) for line in preds]) 用于多分类场景
+    best_preds = [ 1 if prob>0.5 else 0 for prob in preds]
     '''
-    准确率
+    算分
     '''
-    from sklearn.metrics import precision_score
-    print("准确率")
-    score = precision_score(y_test, best_preds, average='macro')
-    print(score)
-    print("f1值")
-    f_score = f1_score(y_test, best_preds, average='macro')
-    print(f_score)
-    append_file("model_matrix.txt","model: %s 准确度:%s f1:%s"
-                %(model_file,score,f_score))
+    from sklearn import  metrics
+    score = metrics.precision_score(y_test, best_preds)
+    f_score = metrics.f1_score(y_test, best_preds)
+    score_line = "model: %s 迭代次数:%s 测试集精确率:%s f1:%s" % (model_file, num_round, score, f_score)
+    print(score_line)
+    append_file("model_matrix.txt", score_line)
+
+    train_preds_prob = bst.predict(dtrain)
+    # train_preds = np.asarray([np.argmax(line) for line in train_preds_prob])
+    train_preds= [ 1 if prob>0.5 else 0 for prob in train_preds_prob]
+    print("训练集，预测为购买数：")
+    print(np.sum(train_preds))
+    print("训练集，为购买数：")
+    print(np.sum(y_train))
+    train_score = metrics.precision_score(y_train, train_preds)
+    train_f1_score = metrics.f1_score(y_test, best_preds)
+    train_score_line = "model: %s 迭代次数:%s 训练集精确率:%s f1:%s" % (model_file, num_round, train_score, train_f1_score)
+    print(train_score_line)
+
+    ''' 在整个训练集上计算f1'''
+
+    # train_preds_prob = bst.predict(xgb.DMatrix(X_src)  )
+    # # train_preds = np.asarray([np.argmax(line) for line in train_preds_prob])
+    # train_preds= [ 1 if prob>0.5 else 0 for prob in train_preds_prob]
+    # print("训练集，预测为购买数：")
+    # print(np.sum(train_preds))
+    # print("训练集，为购买数：")
+    # print(np.sum(y))
+    # train_score = metrics.precision_score(y, train_preds)
+    # train_f1_score = metrics.f1_score(y, best_preds)
+    # train_score_line = "model: %s 迭代次数:%s 训练全集精确率:%s f1:%s" % (model_file, num_round, train_score, train_f1_score)
+    # print(train_score_line)
+
+
     '''
     模型存储与加载
     '''
-    bst.save_model(models_path + model_file)
+    model_file_abs = models_path + model_file + "_" + str(num_round)
+    bst.save_model(model_file_abs)
+    print(model_file_abs)
 
 
 def gen_result(sql_tdata,model_file,res_file):
@@ -82,12 +151,16 @@ def gen_result(sql_tdata,model_file,res_file):
     bst = xgb.Booster({'nthread': 4})  # init model
     bst.load_model(models_path + model_file)
     # 加载测试数据集
+    print("model  loaded...")
     pdata, uid = loadXyFromDB(sql_tdata)
+    print("测试数据集维度:")
+    print(pdata.shape)
     bst_predict = bst.predict(xgb.DMatrix(pdata))
     # print(bst_predict)
-    best_preds = np.asarray([np.argmax(line) for line in bst_predict])
+    # best_preds = np.asarray([np.argmax(line) for line in bst_predict])
+    best_preds = [ 1 if prob>0.5 else 0 for prob in bst_predict]
     pdata_label = pd.DataFrame({"uid": uid, "label": best_preds})
-    pdata_label.to_csv("/Users/chengxingfu/code/AI/mi/res/0913/"+res_file,index=False)
+    pdata_label.to_csv("/Users/chengxingfu/code/AI/mi/res/0914/"+res_file,index=False)
     print(pdata)
     print('---')
     print(best_preds)
@@ -106,7 +179,7 @@ def append_file(filename,str):
 
 def test_a_model(sql_data,ndata_sql,mfile,res_file):
     gen_model(sql_data, model_file=mfile)
-    gen_result(ndata_sql, model_file=mfile, res_file=res_file)
+    # gen_result(ndata_sql, model_file=mfile+"_170", res_file=res_file)
 
 
 
@@ -117,27 +190,8 @@ CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
-            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
-             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
-              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
-               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
-                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
-                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
-                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
-                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
-                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
-                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
-                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
-                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
-                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
-                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
-                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
-                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
-                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
-                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
-                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
-                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
+   ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
+udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
                                 CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
                                  CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
                                   CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
@@ -162,27 +216,8 @@ CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
-            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
-             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
-              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
-               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
-                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
-                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
-                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
-                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
-                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
-                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
-                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
-                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
-                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
-                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
-                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
-                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
-                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
-                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
-                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
-                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
+   ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
+udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
                                 CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
                                  CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
                                   CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
@@ -195,11 +230,11 @@ ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, 
                                          CASE WHEN a.30 = 'True' THEN 1 ELSE 0 END ,
 u.uid
 from user_test u
-join user_active_history30_test a on u.uid=a.uid
-join brand_price b on u.brand=b.brand
-join user_act_h30_test ua on u.uid=ua.uid''',
-                 mfile= 'model_u_30act_h30_without_price',
-                 res_file= "xgb_model_u_30act_h30_without_price.csv"
+left join user_active_history30_test a on u.uid=a.uid
+left join brand_price b on u.brand=b.brand
+left join user_act_h30_test ua on u.uid=ua.uid''',
+                 mfile= 'model_u_lst10_under_prun',
+                 res_file= "xgb_model_u_lst10_under.csv"
                  )
 
 
