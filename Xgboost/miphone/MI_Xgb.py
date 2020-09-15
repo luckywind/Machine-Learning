@@ -8,6 +8,7 @@ import pymysql
 import pandas as pd
 import random
 from sklearn import  metrics
+from sklearn.model_selection import train_test_split
 models_path = "model/"
 # model_file = 'bst_mi.model'
 def loadXyFromDB(sql):
@@ -61,14 +62,17 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
     y_src=y.copy()
     print('采样前的正负样本数')
     print(df.groupby('tag').size())
-    # X['tag']=y
-    X_y_sample=undersampling(df, desired_apriori)
+    # 把df预留部分出来，用于测算f1（不预留时，全训练集算出的f1会偏高）
+    df_train, df_test = train_test_split(df, test_size=0.01)
+    X_y_sample=undersampling(df_train, desired_apriori)
+    # 把使用天数过少的用户直接置为不换机，这部分数据也不加入模型训练
+    X_y_sample=X_y_sample[X_y_sample['tdays']<=350]
     print('调整后的正负样本数')
     print(X_y_sample.groupby('tag').size())
     X,y=(X_y_sample.iloc[:,:-1],X_y_sample.iloc[:,-1])
 
     print("loaded data")
-    from sklearn.model_selection import train_test_split
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=100)
 
     # print("---")
@@ -137,6 +141,17 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
     print(train_src_score_line)
     append_file("model_matrix.txt", train_src_score_line)
 
+    # (4)计算在预留数据集df_test的f1
+    # 使用天数过少的不参与训练的数据，直接置为不换机
+    df_test_matrix = xgb.DMatrix(df_test.iloc[:, :-1])
+    df_test_y=df_test.iloc[:,-1]
+    df_test_preds_prob = bst.predict(df_test_matrix)
+    df_test_preds= [ 1 if prob>0.5 else 0 for prob in df_test_preds_prob]
+    print("预留数据集，预测换机数：%s, 真实换机数：%s"%(str(np.sum(df_test_preds)),str(np.sum(df_test_y))))
+    df_test_score,df_test_f1_score=get_precision_f1(df_test_preds,df_test_y)
+    df_test_score_line = "model: %s 迭代次数:%s 预留集合精确率:%s f1:%s" % (model_file, num_round, df_test_score, df_test_f1_score)
+    print(df_test_score_line)
+    append_file("model_matrix.txt", df_test_score_line)
 
     '''
     模型存储与加载
@@ -191,17 +206,21 @@ def append_file(filename,str):
 
 def test_a_model(sql_data,ndata_sql,mfile,res_file):
     df,X, y = loadXyFromDB(sql_data)
-    # for naround in range(100,300,5):
-    #     for desired_apriori in np.arange(0.2,0.5,0.1):
-    #         train_param = "迭代次数：%s,正样本率:%s" % (str(naround), str(desired_apriori))
-    #         append_file("model_matrix.txt", train_param)
-    #         print(train_param)
-    #         gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=False)
+    for naround in range(200,300,5):
+        for desired_apriori in np.arange(0.2,0.4,0.1):
+            train_param = "迭代次数：%s,正样本率:%s" % (str(naround), str(desired_apriori))
+            append_file("model_matrix.txt", train_param)
+            print(train_param)
+            gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=False)
 
-    naround=290
-    desired_apriori=0.3#0.5981061167977055 f1:0.4749759478510141
-    gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=True)
-    gen_result(ndata_sql, model_file=mfile+"_"+str(naround)+"_"+str(desired_apriori), res_file=res_file)
+    # naround=290
+    # desired_apriori=0.3#0.5981061167977055 f1:0.4749759478510141
+    # 295,0.2 训练全集精确率:0.5143401077980517 f1:0.5515623135762862
+    naround=297
+    desired_apriori=0.4#0.7960985017059783 f1:0.46600382077110103
+
+    # gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=True)
+    # gen_result(ndata_sql, model_file=mfile+"_"+str(naround)+"_"+str(desired_apriori), res_file=res_file+"_"+str(naround)+"_"+str(desired_apriori))
 
 
 
@@ -212,8 +231,28 @@ CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-   ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
-udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+  ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
+  udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
+             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
+              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
+               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
+                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
+                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
+                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
+                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
+                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
+                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
+                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
+                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
+                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
+                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
+                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
+                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
+                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
+                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
+                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
+                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
                                 CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
                                  CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
                                   CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
@@ -238,8 +277,27 @@ CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-   ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
-udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+  ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+            CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
+             CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
+              CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
+               CASE WHEN a.4 = 'True' THEN 1 ELSE 0 END ,
+                CASE WHEN a.5 = 'True' THEN 1 ELSE 0 END ,
+                 CASE WHEN a.6 = 'True' THEN 1 ELSE 0 END ,
+                  CASE WHEN a.7 = 'True' THEN 1 ELSE 0 END ,
+                   CASE WHEN a.8 = 'True' THEN 1 ELSE 0 END ,
+                    CASE WHEN a.9 = 'True' THEN 1 ELSE 0 END ,
+                     CASE WHEN a.0 = 'True' THEN 1 ELSE 0 END ,
+                      CASE WHEN a.11 = 'True' THEN 1 ELSE 0 END ,
+                       CASE WHEN a.12 = 'True' THEN 1 ELSE 0 END ,
+                        CASE WHEN a.13 = 'True' THEN 1 ELSE 0 END ,
+                         CASE WHEN a.14 = 'True' THEN 1 ELSE 0 END ,
+                          CASE WHEN a.15 = 'True' THEN 1 ELSE 0 END ,
+                           CASE WHEN a.16 = 'True' THEN 1 ELSE 0 END ,
+                            CASE WHEN a.17 = 'True' THEN 1 ELSE 0 END ,
+                             CASE WHEN a.18 = 'True' THEN 1 ELSE 0 END ,
+                              CASE WHEN a.19 = 'True' THEN 1 ELSE 0 END ,
+                               CASE WHEN a.20 = 'True' THEN 1 ELSE 0 END ,
                                 CASE WHEN a.21 = 'True' THEN 1 ELSE 0 END ,
                                  CASE WHEN a.22 = 'True' THEN 1 ELSE 0 END ,
                                   CASE WHEN a.23 = 'True' THEN 1 ELSE 0 END ,
@@ -255,8 +313,8 @@ from user_test u
  join user_active_history30_test a on u.uid=a.uid
  join brand_price b on u.brand=b.brand
  join user_act_h30_test ua on u.uid=ua.uid''',
-                 mfile= 'model_u_lst10_qcy_02',
-                 res_file= "xgb_model_u_lst10_qcy_02.csv"
+                 mfile= 'model_u_lst30_qcy',
+                 res_file= "xgb_model_u_lst30_qcy.csv"
                  )
 
 
