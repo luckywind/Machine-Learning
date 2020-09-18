@@ -1,4 +1,6 @@
 # -*-coding:utf-8 -*-
+import time
+
 import xgboost as xgb
 from sklearn import datasets
 import numpy as np
@@ -65,8 +67,8 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
     # 把df预留部分出来，用于测算f1（不预留时，全训练集算出的f1会偏高）
     df_train, df_test = train_test_split(df, test_size=0.01)
     X_y_sample=undersampling(df_train, desired_apriori)
-    # 把使用天数过少的用户直接置为不换机，这部分数据也不加入模型训练
-    X_y_sample=X_y_sample[X_y_sample['tdays']<=350]
+    # 把使用天数过少的用户直接置为不换机，这部分数据也不加入模型训练,最终测试发现这个规则不好用
+    # X_y_sample=X_y_sample[X_y_sample['tdays']<=350]
     print('调整后的正负样本数')
     print(X_y_sample.groupby('tag').size())
     X,y=(X_y_sample.iloc[:,:-1],X_y_sample.iloc[:,-1])
@@ -88,7 +90,7 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
  Generally try with eta 0.1, 0.2, 0.3, max_depth in range of 2 to 10 and num_round around few hundred.
 '''
     param = {
-        'max_depth': 8,  # the maximum depth of each tree
+        'max_depth': 4,  # the maximum depth of each tree
         'eta': 0.1,  # the training step for each iteration
         'objective': 'binary:logistic',
         'subsample':0.6,
@@ -142,11 +144,13 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
     append_file("model_matrix.txt", train_src_score_line)
 
     # (4)计算在预留数据集df_test的f1
-    # 使用天数过少的不参与训练的数据，直接置为不换机
     df_test_matrix = xgb.DMatrix(df_test.iloc[:, :-1])
     df_test_y=df_test.iloc[:,-1]
     df_test_preds_prob = bst.predict(df_test_matrix)
     df_test_preds= [ 1 if prob>0.5 else 0 for prob in df_test_preds_prob]
+    # 使用天数过少的不参与训练的数据，直接置为不换机
+    # for i in list(df_test[df_test['tdays']<=350].index):
+    #     df_test_preds[i]=0
     print("预留数据集，预测换机数：%s, 真实换机数：%s"%(str(np.sum(df_test_preds)),str(np.sum(df_test_y))))
     df_test_score,df_test_f1_score=get_precision_f1(df_test_preds,df_test_y)
     df_test_score_line = "model: %s 迭代次数:%s 预留集合精确率:%s f1:%s" % (model_file, num_round, df_test_score, df_test_f1_score)
@@ -157,7 +161,7 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
     模型存储与加载
     '''
     if(save_model):
-        model_file_abs = models_path + model_file + "_" + str(num_round)+"_"+str(desired_apriori)
+        model_file_abs = models_path + model_file + "_" + str(num_round)+"_"+str(desired_apriori)#+str(time.time())
         print("保存模型:%s" %(model_file_abs))
         bst.save_model(model_file_abs)
         append_file("model_matrix.txt", model_file_abs)
@@ -176,22 +180,20 @@ def gen_result(sql_tdata,model_file,res_file):
     # print(bst_predict)
     # best_preds = np.asarray([np.argmax(line) for line in bst_predict])
     best_preds = [ 1 if prob>0.5 else 0 for prob in bst_predict]
-    pdata_label = pd.DataFrame({"uid": uid, "label": best_preds})
-    print("pdata_label")
-    print(pdata_label.shape)
+    uid_label = pd.DataFrame({"uid": uid, "label": best_preds})
+    pdf['label']=best_preds  #预测数据集加一列预测值
+
+    print("uid_label")
+    print(uid_label.shape)
     # 缺少的数据直接预测为0不换机
     uiddf=loadDfFromDB('select uid,0 label from user_test ')
     print("uiddf")
     print(uiddf.shape)
-    res=pd.concat([pdata_label,uiddf])
+    res=pd.concat([uid_label,uiddf])
     res.drop_duplicates(subset=['uid'], inplace=True, keep='first')
     print("res")
     print(res.shape)
-    res.to_csv("/Users/chengxingfu/code/AI/mi/res/0915/"+res_file,index=False)
-    # print(pdata)
-    # print('---')
-    # print(best_preds)
-    # print('---')
+    res.to_csv("/Users/chengxingfu/code/AI/mi/res/0917/"+res_file,index=False)
     pdata['label']=best_preds
     print("测试集预测换机数")
     print(pdata[pdata.label.eq(1)].shape)
@@ -206,8 +208,10 @@ def append_file(filename,str):
 
 def test_a_model(sql_data,ndata_sql,mfile,res_file):
     df,X, y = loadXyFromDB(sql_data)
-    for naround in range(200,300,5):
-        for desired_apriori in np.arange(0.2,0.4,0.1):
+    for naround in range(200,280,4):
+        for desired_apriori in np.arange(0.2,0.5,0.1):
+        # naround=240
+        #     desired_apriori=0.3 #因为每次都是0.3最优，确定之
             train_param = "迭代次数：%s,正样本率:%s" % (str(naround), str(desired_apriori))
             append_file("model_matrix.txt", train_param)
             print(train_param)
@@ -216,23 +220,23 @@ def test_a_model(sql_data,ndata_sql,mfile,res_file):
     # naround=290
     # desired_apriori=0.3#0.5981061167977055 f1:0.4749759478510141
     # 295,0.2 训练全集精确率:0.5143401077980517 f1:0.5515623135762862
-    naround=297
-    desired_apriori=0.4#0.7960985017059783 f1:0.46600382077110103
-
+    # naround=252
+    # desired_apriori=0.3
     # gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=True)
-    # gen_result(ndata_sql, model_file=mfile+"_"+str(naround)+"_"+str(desired_apriori), res_file=res_file+"_"+str(naround)+"_"+str(desired_apriori))
+    # gen_result(ndata_sql, model_file=mfile+"_"+str(naround)+"_"+str(desired_apriori), res_file=res_file+"_"+str(naround)+"_"+str(desired_apriori)+str(".csv"))
 
 
 
 if __name__ == '__main__':
     test_a_model('''
-   select 
+    select 
 CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-  ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,
-  udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+CAST(SUBSTRING_INDEX(price, '-', 1) AS UNSIGNED) min_price,
+CAST(SUBSTRING_INDEX(price, '-', -1) AS UNSIGNED) max_price,
+       ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10,
             CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
              CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
               CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
@@ -270,14 +274,16 @@ from  user u
 join user_active_history30 a on u.uid=a.uid
 join brand_price b on u.brand=b.brand
 join user_act_h30 ua on u.uid=ua.uid
-
+where total_use_days>=800
 ''',
                  '''select 
 CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
   CAST(age AS DECIMAL(4))realage,
-  ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10, ucnt11, ucnt12, ucnt13, ucnt14, ucnt15, ucnt16, ucnt17, ucnt18, ucnt19, ucnt20, ucnt21, ucnt22, ucnt23, ucnt24, ucnt25, ucnt26, ucnt27, ucnt28, ucnt29, ucnt30,udu1,  udu2, udu3, udu4, udu5, udu6, udu7, udu8, udu9, udu10, udu11, udu12, udu13, udu14, udu15, udu16, udu17, udu18, udu19, udu20, udu21, udu22, udu23, udu24, udu25, udu26, udu27, udu28, udu29, udu30,
+    CAST(SUBSTRING_INDEX(price, '-', 1) AS UNSIGNED) min_price,
+     CAST(SUBSTRING_INDEX(price, '-', -1) AS UNSIGNED) max_price,
+    ucnt1,  ucnt2, ucnt3, ucnt4, ucnt5, ucnt6, ucnt7, ucnt8, ucnt9, ucnt10,
             CASE WHEN a.1 = 'True' THEN 1 ELSE 0 END ,
              CASE WHEN a.2 = 'True' THEN 1 ELSE 0 END ,
               CASE WHEN a.3 = 'True' THEN 1 ELSE 0 END ,
@@ -308,13 +314,16 @@ CAST(total_use_days AS DECIMAL(4)) tdays,
                                        CASE WHEN a.28 = 'True' THEN 1 ELSE 0 END ,
                                         CASE WHEN a.29 = 'True' THEN 1 ELSE 0 END ,
                                          CASE WHEN a.30 = 'True' THEN 1 ELSE 0 END ,
+              
 u.uid
 from user_test u
  join user_active_history30_test a on u.uid=a.uid
  join brand_price b on u.brand=b.brand
- join user_act_h30_test ua on u.uid=ua.uid''',
-                 mfile= 'model_u_lst30_qcy',
-                 res_file= "xgb_model_u_lst30_qcy.csv"
+ join user_act_h30_test ua on u.uid=ua.uid
+where total_use_days>=800
+''',
+                 mfile= 'model_u_qcy_price_min_max_cnt10_a30_0lt800',
+                 res_file= "xgb_model_u_qcy_price_min_max_cnt10_a30_0lt800"
                  )
 
 
