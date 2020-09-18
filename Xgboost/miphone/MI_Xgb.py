@@ -11,12 +11,14 @@ import pandas as pd
 import random
 from sklearn import  metrics
 from sklearn.model_selection import train_test_split
+
+from sklearn import preprocessing
+from sklearn.preprocessing import OneHotEncoder, LabelEncoder
+
 models_path = "model/"
 # model_file = 'bst_mi.model'
 def loadXyFromDB(sql):
-    db_connection_str = 'mysql+pymysql://root:12345678@localhost/miphone'
-    db_connection = create_engine(db_connection_str)
-    df = pd.read_sql(sql, con=db_connection)
+    df=loadDfFromDB(sql)
     # return np.array(df.iloc[:,:-1]),df.iloc[:,-1]
     return df,df.iloc[:,:-1],df.iloc[:,-1]
 
@@ -56,9 +58,10 @@ def get_precision_f1(y_test,best_preds):
     precision = metrics.precision_score(y_test, best_preds)
     f1_score = metrics.f1_score(y_test, best_preds)
     return precision,f1_score
-def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
-    # global bst, models_path, model_file
-    # df,X, y = loadXyFromDB(sql)
+def gen_model(df,model_file, desired_apriori,naround,save_model=True):
+    print(df)
+    X=df.iloc[:,:-1]
+    y=df.iloc[:,-1]
     y.columns=['tag']
     X_src=X.copy()
     y_src=y.copy()
@@ -167,13 +170,17 @@ def gen_model(df,X, y ,model_file, desired_apriori,naround,save_model=True):
         append_file("model_matrix.txt", model_file_abs)
 
 
-def gen_result(sql_tdata,model_file,res_file):
+def gen_result(sql_tdata,str_feature_index_list,model_file,res_file):
     global bst
     bst = xgb.Booster({'nthread': 4})  # init model
     bst.load_model(models_path + model_file)
     # 加载测试数据集
     print("model  loaded...")
-    pdf,pdata, uid = loadXyFromDB(sql_tdata)
+    # pdf,pdata, uid = loadXyFromDB(sql_tdata)
+    pdf = loadDfFromDB(sql_tdata)
+    pdf=one_hot_part(pdf,str_feature_index_list)
+    pdata=pdf.iloc[:,:-1]
+    uid=pdf.iloc[:,-1]
     print("测试数据集维度:")
     print(pdata.shape)
     bst_predict = bst.predict(xgb.DMatrix(pdata))
@@ -185,15 +192,21 @@ def gen_result(sql_tdata,model_file,res_file):
 
     print("uid_label")
     print(uid_label.shape)
-    # 缺少的数据直接预测为0不换机
+    # 换机概率大的直接置为换机
+    huanji_df=loadDfFromDB('select uid,1 label from user_test where total_use_days between 2250 and 2700')
+    tmp_res=pd.concat([huanji_df,uid_label])
+    tmp_res.drop_duplicates(subset=['uid'], inplace=True, keep='first')
+
+    # 缺少的数据直接预测为0不换机(这里包括没有进入训练集的数据)
     uiddf=loadDfFromDB('select uid,0 label from user_test ')
     print("uiddf")
     print(uiddf.shape)
     res=pd.concat([uid_label,uiddf])
     res.drop_duplicates(subset=['uid'], inplace=True, keep='first')
+
     print("res")
     print(res.shape)
-    res.to_csv("/Users/chengxingfu/code/AI/mi/res/0917/"+res_file,index=False)
+    res.to_csv("/Users/chengxingfu/code/AI/mi/res/0918/"+res_file,index=False)
     pdata['label']=best_preds
     print("测试集预测换机数")
     print(pdata[pdata.label.eq(1)].shape)
@@ -206,8 +219,37 @@ def append_file(filename,str):
     # 关闭文件
     fo.close()
 
-def test_a_model(sql_data,ndata_sql,mfile,res_file):
-    df,X, y = loadXyFromDB(sql_data)
+'''独热处理字符型特征矩阵,至少要有两个列'''
+def one_hot(X):
+    encoded_x = None
+    for i in range(0, X.shape[1]):
+        label_encoder = LabelEncoder()
+        feature = label_encoder.fit_transform(X.iloc[:,0])
+        feature = feature.reshape(X.shape[0], 1) #转成列
+        onehot_encoder = OneHotEncoder(sparse=False, categories='auto')
+        feature = onehot_encoder.fit_transform(feature)
+        if encoded_x is None:
+            encoded_x = feature
+        else:
+            encoded_x = np.concatenate((encoded_x, feature), axis=1) #把多个string属性产生的稀疏矩阵并列起来
+    print("X shape: : ", encoded_x.shape)
+    return encoded_x
+
+'''把df中下标在str_feature_index_list的特征进行one_hot编码'''
+def one_hot_part(df, str_feature_index_list):
+    one_hot_x = one_hot(df.iloc[:, str_feature_index_list])
+    one_hot_df=pd.DataFrame(data=one_hot_x)
+    # df=np.concatenate((one_hot_df,df),axis=1)
+    df.drop(df.columns[str_feature_index_list],axis=1,inplace=True)
+    df=pd.concat([one_hot_df,df],axis=1)
+    # df=pd.DataFrame(data=df)
+    return df
+
+
+def test_a_model(str_feature_index_list,sql_data, pdata_sql, mfile, res_file):
+    df = loadDfFromDB(sql_data)
+    # 加一步：把string型特征one-hoting处理
+    df=one_hot_part(df,str_feature_index_list)
     for naround in range(200,280,4):
         for desired_apriori in np.arange(0.2,0.5,0.1):
         # naround=240
@@ -215,21 +257,35 @@ def test_a_model(sql_data,ndata_sql,mfile,res_file):
             train_param = "迭代次数：%s,正样本率:%s" % (str(naround), str(desired_apriori))
             append_file("model_matrix.txt", train_param)
             print(train_param)
-            gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=False)
+            gen_model(df, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=False)
 
     # naround=290
     # desired_apriori=0.3#0.5981061167977055 f1:0.4749759478510141
     # 295,0.2 训练全集精确率:0.5143401077980517 f1:0.5515623135762862
-    # naround=252
-    # desired_apriori=0.3
-    # gen_model(df,X, y, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=True)
-    # gen_result(ndata_sql, model_file=mfile+"_"+str(naround)+"_"+str(desired_apriori), res_file=res_file+"_"+str(naround)+"_"+str(desired_apriori)+str(".csv"))
+    # naround=260
+    # desired_apriori=0.4
+    # gen_model(df, model_file=mfile,desired_apriori=desired_apriori,naround=naround,save_model=True)
+    gen_result(pdata_sql,str_feature_index_list, model_file=mfile + "_" + str(naround) + "_" + str(desired_apriori), res_file=res_file + "_" + str(naround) + "_" + str(desired_apriori) + str(".csv"))
 
 
 
 if __name__ == '__main__':
-    test_a_model('''
+
+    test_a_model([0,1,2,3,4],'''
     select 
+    case 
+  when u.brand like '小米MAX%' then '小米MAX'
+  when u.brand like '小米Mix%' then '小米Mix'
+  when u.brand like '小米Note%' then '小米Note'
+  when u.brand like '小米手机%' then '小米手机'
+  when u.brand like '红米Note%' then '红米Note'
+  when u.brand like '红米K%' then '红米Kill'
+  when u.brand like '红米手机%' or u.brand in ('红米Pro','红米S2') then '红米手机'
+  else u.brand end as brand_type,
+  modelname,
+  version,
+  user_degree,
+  resident_city_type,
 CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
@@ -273,10 +329,21 @@ CAST(SUBSTRING_INDEX(price, '-', -1) AS UNSIGNED) max_price,
 from  user u
 join user_active_history30 a on u.uid=a.uid
 join brand_price b on u.brand=b.brand
-join user_act_h30 ua on u.uid=ua.uid
-where total_use_days>=800
+join user_act_h30 ua on u.uid=ua.uid;
 ''',
                  '''select 
+                     case 
+  when u.brand like '小米MAX%' then '小米MAX'
+  when u.brand like '小米Mix%' then '小米Mix'
+  when u.brand like '小米Note%' then '小米Note'
+  when u.brand like '小米手机%' then '小米手机'
+  when u.brand like '红米Note%' then '红米Note'
+  when u.brand like '红米K%' then '红米Kill'
+  when u.brand like '红米手机%' or u.brand in ('红米Pro','红米S2') then '红米手机'
+  else u.brand end as brand_type,
+    modelname,
+  version,  user_degree,
+  resident_city_type,
 CAST(total_use_days AS DECIMAL(4)) tdays,
  CAST(user_age AS DECIMAL(4)) uage,
   CAST(user_sex AS DECIMAL(4)) usex,
@@ -319,11 +386,10 @@ u.uid
 from user_test u
  join user_active_history30_test a on u.uid=a.uid
  join brand_price b on u.brand=b.brand
- join user_act_h30_test ua on u.uid=ua.uid
-where total_use_days>=800
+ join user_act_h30_test ua on u.uid=ua.uid;
 ''',
-                 mfile= 'model_u_qcy_price_min_max_cnt10_a30_0lt800',
-                 res_file= "xgb_model_u_qcy_price_min_max_cnt10_a30_0lt800"
+                 mfile= 'model_u_qcy_price_min_max_cnt10_a30_str',
+                 res_file= "xgb_model_u_qcy_price_min_max_cnt10_a30_str"
                  )
 
 
